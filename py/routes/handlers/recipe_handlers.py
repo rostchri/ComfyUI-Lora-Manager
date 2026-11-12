@@ -2575,6 +2575,18 @@ class RecipeManagementHandler:
                             **(embedded_gen_params or {}),
                             **civitai_parsed["gen_params"],
                         }
+            # LM-WORKFLOW-PERSIST-PATCH (do_import): capture meta.comfy.
+            if isinstance(civitai_inner_meta, dict):
+                _comfy_wf = civitai_inner_meta.get("comfy")
+                if _comfy_wf:
+                    import json as _json_local
+                    try:
+                        embedded_workflow_json = (
+                            _json_local.loads(_comfy_wf)
+                            if isinstance(_comfy_wf, str) else _comfy_wf
+                        )
+                    except Exception:
+                        embedded_workflow_json = _comfy_wf
 
         metadata: Dict[str, Any] = {
             "base_model": "",
@@ -2582,6 +2594,13 @@ class RecipeManagementHandler:
             "gen_params": embedded_gen_params or {},
             "source_path": image_url,
         }
+        # LM-WORKFLOW-PERSIST-PATCH: attach captured ComfyUI workflow.
+        try:
+            if embedded_workflow_json:
+                metadata["embedded_workflow"] = embedded_workflow_json
+        except NameError:
+            pass  # embedded_workflow_json not set when meta.comfy absent
+
         if original_workflow:
             metadata["workflow"] = original_workflow
 

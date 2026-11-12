@@ -210,6 +210,27 @@ class RecipePersistenceService:
                 pixel_preserving=skip_optimize,
             )
 
+        # LM-WORKFLOW-PERSIST-PATCH: write embedded ComfyUI workflow next
+        # to the recipe JSON for offline survival of Civitai outages.
+        _embedded_wf = metadata.get("embedded_workflow")
+        if _embedded_wf:
+            try:
+                _wf_path = os.path.normpath(
+                    os.path.join(recipes_dir, f"{recipe_id}.workflow.json")
+                )
+                with open(_wf_path, "w", encoding="utf-8") as _wf_fobj:
+                    json.dump(_embedded_wf, _wf_fobj, indent=2, ensure_ascii=False)
+                recipe_data["workflow_path"] = _wf_path
+                # Re-write recipe JSON to include workflow_path
+                with open(json_path, "w", encoding="utf-8") as _rj_fobj:
+                    json.dump(recipe_data, _rj_fobj, indent=4, ensure_ascii=False)
+            except Exception as _wf_exc:
+                # Non-fatal: recipe still saved, just no workflow side-file
+                import logging
+                logging.getLogger(__name__).warning(
+                    "embedded_workflow write failed: %s", _wf_exc
+                )
+
         matching_recipes = await self._find_matching_recipes(recipe_scanner, fingerprint, exclude_id=recipe_id)
         await recipe_scanner.add_recipe(recipe_data)
 
