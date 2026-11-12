@@ -2891,6 +2891,7 @@ class DownloadManager:
                 except aimi.AimiError as exc:
                     return {"success": False, "error": str(exc)}
                 os.makedirs(os.path.dirname(download_target), exist_ok=True)
+                await aimi.wait_for_room(aimi_plan)
 
             part_path = download_target + ".part"
             metadata_path = get_metadata_path(save_path)

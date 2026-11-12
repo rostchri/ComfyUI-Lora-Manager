@@ -32,13 +32,18 @@ Configuration (environment only; unset mode = upstream behaviour):
 ``LORA_MANAGER_AIMI_BUCKET_MOUNT``  (rw) container path of the whole bucket mount
 ``LORA_MANAGER_AIMI_CLI``           (rw) path of the ``aimodelinventory`` CLI script
 ``LORA_MANAGER_AIMI_STAGING``       (rw) download staging directory, outside the mount
-``LORA_MANAGER_AIMI_BLOB_UPLOAD``   (rw) mount (default: write through the mount, keeps the
-                                    VFS cache warm) | rclone (``rclone copyto`` direct)
+``LORA_MANAGER_AIMI_BLOB_UPLOAD``   (rw) auto (default: mount when the staging disk has room
+                                    for a second copy, else rclone) | mount (write through the
+                                    mount, keeps the VFS cache warm) | rclone (``rclone copyto``)
 ``LORA_MANAGER_AIMI_UPLOAD_WAIT``   (rw) seconds to wait for a mount upload (default 7200)
+``LORA_MANAGER_AIMI_FREE_RESERVE_GB`` (rw) free space kept on the staging disk (default 10)
+``LORA_MANAGER_AIMI_SPACE_WAIT``    (rw) seconds a download waits for that space before it
+                                    starts anyway (default 21600); downloads are never aborted
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import importlib.machinery
 import json
@@ -546,6 +551,7 @@ class DownloadPlan:
     file_name: str
     expected_sha256: Optional[str]
     info: Dict[str, Any] = field(default_factory=dict)
+    expected_size: int = 0
 
     @property
     def repo(self) -> str:
@@ -615,7 +621,45 @@ def plan_download(save_path: str, version_info: Dict[str, Any], sha256: Optional
         file_name=file_name,
         expected_sha256=expected,
         info={k: v for k, v in info.items() if v},
+        expected_size=int(float(primary.get("sizeKB") or 0) * 1024),
     )
+
+
+def _reserve_bytes() -> int:
+    return int(float(_env("LORA_MANAGER_AIMI_FREE_RESERVE_GB", "10")) * (1 << 30))
+
+
+def _free_bytes(path: str) -> int:
+    return shutil.disk_usage(path).free
+
+
+def has_room(size: int, copies: int = 1) -> bool:
+    """True when the staging disk holds *copies* more files of *size* bytes
+    and still keeps the reserve."""
+    return _free_bytes(staging_dir()) >= copies * size + _reserve_bytes()
+
+
+async def wait_for_room(plan: DownloadPlan, poll: float = 30.0) -> None:
+    """Pause a download until the staging disk has room for it.
+
+    The shared VFS cache frees space by evicting old blobs, so waiting is
+    usually enough. Never aborts: after LORA_MANAGER_AIMI_SPACE_WAIT seconds
+    the download starts anyway.
+    """
+    if not plan.expected_size or has_room(plan.expected_size):
+        return
+    deadline = time.monotonic() + float(_env("LORA_MANAGER_AIMI_SPACE_WAIT", "21600"))
+    logger.warning(
+        "aimodelinventory: waiting for %.1f GiB free on %s before downloading %s",
+        (plan.expected_size + _reserve_bytes()) / (1 << 30),
+        staging_dir(),
+        plan.file_name,
+    )
+    while not has_room(plan.expected_size):
+        if time.monotonic() > deadline:
+            logger.warning("aimodelinventory: still short of space, downloading %s anyway", plan.file_name)
+            return
+        await asyncio.sleep(poll)
 
 
 def _sha256_local(path: str) -> str:
@@ -635,7 +679,9 @@ def _place_blob(module: Any, cfg: Any, staging: str, sha256: str) -> None:
         if existing["size"] != size:
             raise AimiError(f"aimodelinventory: blob collision {key}: {existing['size']} != {size}")
         return
-    if _env("LORA_MANAGER_AIMI_BLOB_UPLOAD", "mount") == "rclone":
+    method = _env("LORA_MANAGER_AIMI_BLOB_UPLOAD", "auto")
+    # The mount keeps a second copy in the VFS cache until the upload is done.
+    if method == "rclone" or (method == "auto" and not has_room(size)):
         module.ensure_blob(cfg, module.Path(staging), sha256)
         return
     # Through the mount: rclone uploads it and keeps the bytes in the VFS

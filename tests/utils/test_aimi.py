@@ -137,6 +137,8 @@ def bucket(tmp_path, monkeypatch):
     monkeypatch.setenv("LORA_MANAGER_AIMI_CLI", str(cli))
     monkeypatch.setenv("LORA_MANAGER_AIMI_STAGING", str(staging))
     monkeypatch.setenv("LORA_MANAGER_AIMI_UPLOAD_WAIT", "5")
+    monkeypatch.setenv("LORA_MANAGER_AIMI_FREE_RESERVE_GB", "0")
+    monkeypatch.delenv("LORA_MANAGER_AIMI_SPACE_WAIT", raising=False)
     for name in ("RW_DIRS", "TYPE_MAP", "HEADER_READS", "BLOB_UPLOAD"):
         monkeypatch.delenv(f"LORA_MANAGER_AIMI_{name}", raising=False)
     monkeypatch.setenv("AIMI_NO_REMOTE", "1")
@@ -441,6 +443,49 @@ def test_publish_download_rclone_upload(bucket, monkeypatch):
     aimi.publish_download(plan, _stage(plan, data))
     module = aimi._cli_state["module"]
     assert ("ensure_blob", _sha(data)) in module.CALLS
+
+
+def test_publish_download_auto_falls_back_to_rclone_when_short(bucket, monkeypatch):
+    monkeypatch.setattr(aimi, "_free_bytes", lambda _path: 0)
+    data = b"no room for a cache copy"
+    plan = aimi.plan_download(str(bucket / "app/comfyui/loras/s.safetensors"), _version(_sha(data), "s.safetensors"), None)
+    aimi.publish_download(plan, _stage(plan, data))
+    assert ("ensure_blob", _sha(data)) in aimi._cli_state["module"].CALLS
+
+
+def test_publish_download_auto_uses_mount_with_room(bucket):
+    data = b"room enough"
+    plan = aimi.plan_download(str(bucket / "app/comfyui/loras/m.safetensors"), _version(_sha(data), "m.safetensors"), None)
+    aimi.publish_download(plan, _stage(plan, data))
+    calls = aimi._cli_state["module"].CALLS
+    assert not any(call[0] == "ensure_blob" for call in calls)
+    assert not os.path.exists(str(bucket / aimi._cli()[1].blob_key(_sha(data))) + ".partial")
+
+
+def test_plan_download_reads_expected_size(bucket):
+    version = _version(None)
+    version["files"][0]["sizeKB"] = 2.5
+    plan = aimi.plan_download(str(bucket / "app/comfyui/loras/dl.safetensors"), version, None)
+    assert plan.expected_size == 2560
+
+
+async def test_wait_for_room_pauses_until_space(bucket, monkeypatch):
+    free = iter([0, 0, 1 << 40])
+    monkeypatch.setattr(aimi, "_free_bytes", lambda _path: next(free))
+    version = _version(None)
+    version["files"][0]["sizeKB"] = 1024
+    plan = aimi.plan_download(str(bucket / "app/comfyui/loras/dl.safetensors"), version, None)
+    await aimi.wait_for_room(plan, poll=0)
+    assert next(free, None) is None
+
+
+async def test_wait_for_room_never_aborts(bucket, monkeypatch):
+    monkeypatch.setattr(aimi, "_free_bytes", lambda _path: 0)
+    monkeypatch.setenv("LORA_MANAGER_AIMI_SPACE_WAIT", "0")
+    version = _version(None)
+    version["files"][0]["sizeKB"] = 1024
+    plan = aimi.plan_download(str(bucket / "app/comfyui/loras/dl.safetensors"), version, None)
+    await aimi.wait_for_room(plan, poll=0)
 
 
 def test_publish_download_mismatch_books_nothing(bucket):
