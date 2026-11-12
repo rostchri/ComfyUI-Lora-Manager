@@ -53,6 +53,7 @@ from ...services.llm_service import (
 from ...services.cache_health_monitor import CacheHealthMonitor, CacheHealthStatus
 from ...services.use_cases.sidecar_migration_use_case import SidecarMigrationUseCase
 from ...services.websocket_progress_callback import WebSocketBroadcastCallback
+from ...utils import aimi
 from ...utils.models import BaseModelMetadata
 from ...utils.civitai_utils import build_civitai_model_page_url
 from ...utils.constants import (
@@ -1183,7 +1184,14 @@ class DoctorHandler:
                                 os.path.splitext(new_path)[0]
                             )
 
-                            os.rename(path, new_path)
+                            governed = aimi.governs(path)
+                            if governed:
+                                # aimodelinventory view link: re-link and
+                                # book app_paths instead of moving bytes.
+                                aimi.guard_write(path, "rename")
+                                aimi.relink(path, new_path)
+                            else:
+                                os.rename(path, new_path)
 
                             old_metadata_path = get_metadata_path(path)
                             new_metadata_path = get_metadata_path(new_path)
@@ -1192,7 +1200,7 @@ class DoctorHandler:
 
                             old_sidecar = old_base_no_ext + ".civitai.info"
                             new_sidecar = new_base_no_ext + ".civitai.info"
-                            if os.path.exists(old_sidecar):
+                            if not governed and os.path.exists(old_sidecar):
                                 os.rename(old_sidecar, new_sidecar)
 
                             for preview_ext in PREVIEW_EXTENSIONS:

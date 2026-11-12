@@ -7,6 +7,7 @@ import shutil
 from typing import Any, Dict, List, Optional, Sequence, Set
 from abc import ABC, abstractmethod
 
+from ..utils import aimi
 from ..utils.utils import calculate_relative_path_for_model, fit_stem_to_path_budget, remove_empty_dirs
 from ..utils.constants import AUTO_ORGANIZE_BATCH_SIZE, MODEL_FILE_EXTENSIONS
 from ..utils.recipes_paths import path_is_or_contains_recipes_dir
@@ -537,6 +538,11 @@ class ModelFileService:
         """
         cleanup_counts = {}
         for path in paths:
+            if aimi.skip_root_maintenance(path):
+                # aimodelinventory view: empty folders are harmless, a walk
+                # over the mount is not.
+                cleanup_counts[path] = 0
+                continue
             removed = remove_empty_dirs(path)
             cleanup_counts[path] = removed
         return cleanup_counts
@@ -571,6 +577,7 @@ class ModelMoveService:
                 return {"success": False, "error": "Folder path is required"}
 
             _require_path_in_library_roots(folder_path, self.scanner, label="Folder path")
+            aimi.guard_write(folder_path, "create folder")
 
             absolute_path = os.path.abspath(folder_path)
             already_exists = os.path.isdir(absolute_path)
@@ -718,6 +725,7 @@ class ModelMoveService:
                 return {"success": False, "error": "Folder path is required"}
 
             _require_path_in_library_roots(folder_path, self.scanner, label="Folder path")
+            aimi.guard_write(folder_path, "delete folder")
 
             absolute_path = os.path.abspath(folder_path)
             if os.path.islink(absolute_path):
@@ -1073,7 +1081,12 @@ class ModelMoveService:
                     ),
                 }
 
+            aimi.guard_move(absolute_path, target, "rename folder")
             os.rename(absolute_path, target)
+            if aimi.governs(target):
+                # Links keep their depth (same parent), so their relative
+                # targets stay valid; only the store's app_paths change.
+                await asyncio.to_thread(aimi.after_folder_rename, absolute_path, target)
 
             new_relative = self._calculate_relative_folder(target)
             await self._rename_folder_records(

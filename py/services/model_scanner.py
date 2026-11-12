@@ -11,6 +11,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Sequ
 
 from ..utils.models import BaseModelMetadata, autov3_from_civitai_files, quantization_from_civitai_files
 from ..config import config
+from ..utils import aimi
 from ..utils.constants import is_empty_placeholder_hash
 from ..utils.file_utils import find_preview_file, get_preview_extension, calculate_sha256, calculate_autov3
 from ..utils.gc_utils import schedule_refreeze, schedule_refreeze_after_rebuild
@@ -4048,7 +4049,8 @@ class ModelScanner:
 
             _require_path_in_library_roots(source_path, self, label="Source path")
             _require_path_in_library_roots(target_path, self, label="Target path")
-            
+            aimi.guard_move(source_path, target_path)
+
             os.makedirs(target_path, exist_ok=True)
             
             def get_source_hash():
@@ -4079,8 +4081,12 @@ class ModelScanner:
                 natural_target = os.path.join(target_path, f"{base_name}{file_ext}").replace(os.sep, '/')
                 return await self._reconcile_already_moved(source_path, [target_file, natural_target])
 
-            shutil.move(move_source, move_target)
-            
+            if aimi.governs(move_source):
+                # aimodelinventory view link: re-link and book app_paths.
+                await asyncio.to_thread(aimi.relink, move_source, move_target)
+            else:
+                shutil.move(move_source, move_target)
+
             # Move this artifact's associated files.
             source_metadata = None
             moved_metadata_path = None
@@ -4090,7 +4096,9 @@ class ModelScanner:
             # mode; collect from every directory that holds them.
             source_sidecar_dir = get_sidecar_dir(source_path)
             target_sidecar_dir = get_sidecar_dir(target_file)
-            associated_dirs = [(source_dir, target_path)]
+            # aimodelinventory: never touch files next to a view link; its
+            # sidecars live in the centralized mirror only.
+            associated_dirs = [] if aimi.governs(source_dir) else [(source_dir, target_path)]
             if os.path.normpath(source_sidecar_dir) != os.path.normpath(source_dir):
                 associated_dirs.append((source_sidecar_dir, target_sidecar_dir))
 

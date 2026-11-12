@@ -1,5 +1,6 @@
 from safetensors import safe_open
 from typing import Dict, List, Optional, Tuple
+from . import aimi
 from .model_utils import determine_base_model
 import os
 import logging
@@ -9,6 +10,8 @@ logger = logging.getLogger(__name__)
 
 async def extract_lora_metadata(file_path: str) -> Dict[str, str]:
     """Extract essential metadata from safetensors file"""
+    if aimi.skip_header_read(file_path):
+        return {"base_model": "Unknown"}
     try:
         with safe_open(file_path, framework="pt", device="cpu") as f:
             metadata = f.metadata()
@@ -50,7 +53,7 @@ async def extract_checkpoint_metadata(file_path: str) -> dict[str, str]:
             model_info['model_type'] = 'realistic'
         
         # Try to peek at the safetensors file structure if available
-        if file_path.endswith('.safetensors'):
+        if file_path.endswith('.safetensors') and not aimi.skip_header_read(file_path):
             import json
             import struct
             
@@ -95,7 +98,10 @@ async def extract_trained_words(file_path: str) -> Tuple[List[Tuple[str, int]], 
         - class_tokens value (or None if not found)
     """
     class_tokens = None
-    
+
+    if aimi.skip_header_read(file_path):
+        return [], class_tokens
+
     try:
         with safe_open(file_path, framework="pt", device="cpu") as f:
             metadata = f.metadata()

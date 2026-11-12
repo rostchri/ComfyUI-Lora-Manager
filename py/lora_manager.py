@@ -17,6 +17,7 @@ if not standalone_mode:
 from server import PromptServer  # pyright: ignore[reportMissingImports]
 
 from .config import config
+from .utils import aimi
 from .services.model_service_factory import (
     ModelServiceFactory,
     register_default_model_types,
@@ -386,6 +387,10 @@ class LoraManager:
 
             for root_path in all_roots:
                 if not os.path.exists(root_path):
+                    continue
+                if aimi.skip_root_maintenance(root_path):
+                    # aimodelinventory view: walking it would list the whole
+                    # mount, and the store is not ours to clean.
                     continue
 
                 try:

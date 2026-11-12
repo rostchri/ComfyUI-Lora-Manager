@@ -24,11 +24,23 @@ def get_effective_recipes_dir() -> str:
     from ..services.settings_manager import get_settings_manager
     from ..config import config
 
+    from . import aimi
+
     custom_recipes_dir = get_settings_manager().get("recipes_path", "")
     if isinstance(custom_recipes_dir, str) and custom_recipes_dir.strip():
-        return os.path.abspath(
+        custom = os.path.abspath(
             os.path.normpath(os.path.expanduser(custom_recipes_dir.strip()))
         )
+        if not aimi.governs(custom):
+            return custom
+
+    if aimi.active():
+        # aimodelinventory: the lora root is a view into the shared store;
+        # recipes belong next to the centralized sidecars instead.
+        from .sidecar_paths import get_sidecar_root
+
+        sidecar_root = get_sidecar_root()
+        return os.path.abspath(os.path.join(sidecar_root, "recipes")) if sidecar_root else ""
 
     lora_roots = [
         path

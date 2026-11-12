@@ -15,6 +15,7 @@ from .constants import (
     PREVIEW_EXTENSIONS,
     SUPPORTED_MEDIA_EXTENSIONS,
 )
+from . import aimi
 from .exif_utils import ExifUtils
 from ..services.settings_manager import get_settings_manager
 
@@ -61,6 +62,10 @@ async def calculate_sha256(file_path: str) -> str:
 
 
 def _calculate_sha256_sync(file_path: str) -> str:
+    if aimi.governs(file_path):
+        # aimodelinventory: the identity is the blob address; reading the file
+        # would pull the whole model through the FUSE mount.
+        return aimi.sha256_without_reading(file_path)
     sha256_hash = hashlib.sha256()
     chunk_size = _get_hash_chunk_size_bytes()
     read_any = False
@@ -92,6 +97,8 @@ def calculate_autov2(file_path: str) -> str:
 
     Reference: https://developer.civitai.com/site/reference/model-versions
     """
+    if aimi.governs(file_path):
+        return aimi.sha256_without_reading(file_path)[:10]
     full_hash = hashlib.sha256()
     chunk_size = _get_hash_chunk_size_bytes()
     with open(file_path, "rb") as f:
@@ -111,6 +118,8 @@ def read_safetensors_metadata(file_path: str) -> dict[str, Any]:
     Returns an empty dict if the file is not a valid safetensors file or has no
     metadata.
     """
+    if aimi.skip_header_read(file_path):
+        return {}
     try:
         with open(file_path, "rb") as f:
             header_len_bytes = f.read(8)

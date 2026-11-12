@@ -233,7 +233,7 @@ class OtherScanner(ModelScanner):
 
             # Calculate hash
             logger.info(f"Calculating hash for other model: {file_path}")
-            sha256 = await calculate_sha256(real_path)
+            sha256 = await calculate_sha256(file_path)  # aimodelinventory: identity from the link chain
             if not sha256:
                 # Nothing was read (empty or truncated file): no identity to
                 # store. Keep the lazy-hash state for a later retry and never

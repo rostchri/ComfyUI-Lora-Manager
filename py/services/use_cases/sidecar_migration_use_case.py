@@ -47,6 +47,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol, Seq
 
 from ..service_registry import ServiceRegistry
 from ..settings_manager import get_settings_manager
+from ...utils import aimi
 from ...utils.constants import PREVIEW_EXTENSIONS
 from ...utils.file_utils import find_preview_file, get_preview_extension
 from ...utils.metadata_manager import MetadataManager
@@ -127,6 +128,11 @@ class SidecarMigrationUseCase:
     ) -> Dict[str, Any]:
         """Move sidecars/previews from alongside the models into the mirror root."""
 
+        if aimi.active():
+            return self._refusal(
+                DIRECTION_TO_CENTRALIZED,
+                "aimodelinventory: model folders are store views; files next to the models are not migrated",
+            )
         if (
             not force
             and get_storage_mode() == STORAGE_MODE_CENTRALIZED
@@ -150,6 +156,11 @@ class SidecarMigrationUseCase:
     ) -> Dict[str, Any]:
         """Move sidecars/previews from the mirror root back next to the models."""
 
+        if aimi.active():
+            return self._refusal(
+                DIRECTION_TO_ALONGSIDE,
+                "aimodelinventory: sidecars stay centralized; model folders are store views",
+            )
         if not force and get_storage_mode() != STORAGE_MODE_CENTRALIZED:
             return self._refusal(
                 DIRECTION_TO_ALONGSIDE,
@@ -196,6 +207,11 @@ class SidecarMigrationUseCase:
         )
         if not old:
             return self._refusal(DIRECTION_RELOCATE_ROOT, "old_root is required")
+        if aimi.governs(old) or aimi.governs(new_root):
+            return self._refusal(
+                DIRECTION_RELOCATE_ROOT,
+                "aimodelinventory: the sidecar root must not lie in a store view",
+            )
         if os.path.normpath(old) == os.path.normpath(new_root):
             return self._refusal(
                 DIRECTION_RELOCATE_ROOT,

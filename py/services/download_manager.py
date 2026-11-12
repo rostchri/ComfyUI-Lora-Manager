@@ -43,6 +43,7 @@ from ..utils.paid_access import (
     normalize_paid_access,
     parse_civitai_timestamp,
 )
+from ..utils import aimi
 from ..utils.file_utils import calculate_sha256, calculate_autov3, detect_media_extension, reconcile_media_extension
 from ..utils.preview_selection import resolve_mature_threshold, select_preview_media
 from ..utils.utils import calculate_filename_for_model, decode_percent_encoded_filename, fit_stem_to_path_budget, sanitize_folder_name
@@ -2865,6 +2866,11 @@ class DownloadManager:
         preview_nsfw_level = 0
         save_path: str | None = None
         transfer_backend = (transfer_backend or self._get_model_download_backend()).lower()
+        aimi_plan: Optional[aimi.DownloadPlan] = None
+        if aimi.governs(save_dir):
+            # aimodelinventory: the bytes go to local staging (python backend,
+            # resumable .part) and are booked into the store afterwards.
+            transfer_backend = "python"
         try:
             resolved, save_path = await self._resolve_download_target_path(
                 save_dir,
@@ -2875,14 +2881,25 @@ class DownloadManager:
             if not resolved:
                 return {"success": False, "error": save_path}
 
-            part_path = save_path + ".part"
+            download_target = save_path
+            if aimi.governs(save_path):
+                try:
+                    aimi_plan = aimi.plan_download(
+                        save_path, version_info, getattr(metadata, "sha256", None)
+                    )
+                    download_target = aimi_plan.staging_path
+                except aimi.AimiError as exc:
+                    return {"success": False, "error": str(exc)}
+                os.makedirs(os.path.dirname(download_target), exist_ok=True)
+
+            part_path = download_target + ".part"
             metadata_path = get_metadata_path(save_path)
 
             pause_control = self._pause_events.get(download_id) if download_id else None
 
             # Store file paths in active_downloads for potential cleanup
             if download_id and download_id in self._active_downloads:
-                self._active_downloads[download_id]["file_path"] = save_path
+                self._active_downloads[download_id]["file_path"] = download_target
                 if transfer_backend == "python":
                     self._active_downloads[download_id]["part_path"] = part_path
                 if transfer_backend == "aria2":
@@ -3070,7 +3087,7 @@ class DownloadManager:
                     )
                 success, result = await self._download_model_file(
                     download_url,
-                    save_path,
+                    download_target,
                     backend=transfer_backend,
                     progress_callback=lambda progress, snapshot=None: (
                         self._handle_download_progress(
@@ -3090,12 +3107,12 @@ class DownloadManager:
                 last_error = result
                 if transfer_backend == "aria2":
                     self._reconcile_failed_aria2_partial(save_path)
-                elif os.path.exists(save_path):
+                elif os.path.exists(download_target):
                     try:
-                        os.remove(save_path)
+                        os.remove(download_target)
                     except Exception as e:
                         logger.warning(
-                            f"Failed to remove incomplete file {save_path}: {e}"
+                            f"Failed to remove incomplete file {download_target}: {e}"
                         )
             else:
                 # Clean up files on failure, but preserve .part file for resume
@@ -3130,6 +3147,15 @@ class DownloadManager:
                     "success": False,
                     "error": last_error or "Failed to download file",
                 }
+
+            if aimi_plan is not None:
+                published = await self._publish_aimi_download(
+                    aimi_plan, download_target, metadata, model_type
+                )
+                if published is not None:
+                    return published
+                if download_id and download_id in self._active_downloads:
+                    self._active_downloads[download_id]["file_path"] = save_path
 
             # 4. Handle archive extraction and prepare per-file metadata
             actual_file_paths = [save_path]
@@ -3462,6 +3488,36 @@ class DownloadManager:
 
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._archive_executor, _extract_sync)
+
+    async def _publish_aimi_download(
+        self, plan, staging_path: str, metadata, model_type: str
+    ) -> Optional[Dict[str, Any]]:
+        """Book a staged download into aimodelinventory; error dict on failure.
+
+        Archives are refused: their members have no CivitAI hash to verify
+        and no stable name in the store. Header reads happen here, on the
+        local staging copy, because the store copy must not be read.
+        """
+        if model_type == "workflow" or zipfile.is_zipfile(staging_path):
+            try:
+                os.remove(staging_path)
+            except OSError:
+                pass
+            return {
+                "success": False,
+                "error": "aimodelinventory: archives and workflows are not booked into the store",
+            }
+        loop = asyncio.get_running_loop()
+        if getattr(metadata, "autov3", None) is None:
+            autov3 = await loop.run_in_executor(None, calculate_autov3, staging_path)
+            metadata.autov3 = (autov3 or "").lower()
+        try:
+            booked = await asyncio.to_thread(aimi.publish_download, plan, staging_path)
+        except Exception as exc:
+            logger.error("aimodelinventory booking failed for %s: %s", plan.save_path, exc)
+            return {"success": False, "error": f"aimodelinventory: {exc}"}
+        metadata.sha256 = booked["sha256"]
+        return None
 
     async def _build_metadata_entries(
         self, base_metadata, file_paths: List[str]

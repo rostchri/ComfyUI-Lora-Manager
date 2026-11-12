@@ -11,6 +11,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterable, List
 
 from ..services.service_registry import ServiceRegistry
 from ..services.pending_delete_service import get_pending_delete_service
+from ..utils import aimi
 from ..utils.constants import PREVIEW_EXTENSIONS
 from ..utils.metadata_manager import MetadataManager
 from ..utils.sidecar_paths import (
@@ -73,7 +74,16 @@ async def delete_model_artifacts(
     main_path = model_path.replace(os.sep, "/")
     deleted_paths: set[str] = set()
 
-    if os.path.exists(main_path):
+    if aimi.governs(main_path):
+        # aimodelinventory: drop the view link only; the store keeps the blob.
+        aimi.guard_write(main_path, "delete")
+        if os.path.lexists(main_path):
+            await asyncio.to_thread(aimi.unlink_view_entry, main_path)
+            deleted.append(main_path)
+            deleted_paths.add(os.path.normcase(os.path.abspath(main_path)))
+        else:
+            logger.warning("Model file not found: %s", main_file)
+    elif os.path.exists(main_path):
         os.remove(main_path)
         deleted.append(main_path)
         deleted_paths.add(os.path.normcase(os.path.abspath(main_path)))
@@ -183,6 +193,7 @@ class ModelLifecycleService:
             raise ValueError("Model path is required")
 
         _require_path_in_library_roots(file_path, self._scanner, label="File path")
+        aimi.guard_write(file_path, "delete")
 
         cache = await self._scanner.get_cached_data()
 
@@ -212,7 +223,7 @@ class ModelLifecycleService:
         # enabled; a successful stage renames the artifacts away, otherwise
         # fall back to the direct hard delete.
         pending_delete_service = await get_pending_delete_service()
-        batch_id = await pending_delete_service.stage_model_delete(
+        batch_id = None if aimi.governs(file_path) else await pending_delete_service.stage_model_delete(
             scanner=self._scanner,
             target_dir=target_dir,
             file_name=file_name,
@@ -458,6 +469,7 @@ class ModelLifecycleService:
             raise ValueError("File path and new file name are required")
 
         _require_path_in_library_roots(file_path, self._scanner, label="File path")
+        aimi.guard_write(file_path, "rename")
 
         invalid_chars = {"/", "\\", ":", "*", "?", '"', "<", ">", "|"}
         if any(char in new_file_name for char in invalid_chars):
@@ -614,7 +626,11 @@ class ModelLifecycleService:
             new_path = os.path.join(
                 os.path.dirname(old_path), new_pattern
             ).replace(os.sep, "/")
-            os.rename(old_path, new_path)
+            if aimi.governs(old_path):
+                # aimodelinventory view link: re-link and book app_paths.
+                aimi.relink(old_path, new_path)
+            else:
+                os.rename(old_path, new_path)
             renamed_files.append(new_path)
 
             if ext.endswith(".metadata.json"):

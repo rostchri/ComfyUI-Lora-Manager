@@ -282,7 +282,7 @@ class MetadataManager:
             # Calculate file hash
             start_hash_time = time.perf_counter()
             logger.debug(f"Calculating SHA256 hash for {real_path}...")
-            sha256 = await calculate_sha256(real_path)
+            sha256 = await calculate_sha256(file_path)  # aimodelinventory: identity from the link chain
             if not sha256:
                 # An empty file has no model identity: writing a sidecar for it
                 # would persist the empty-string SHA256 placeholder and pull the

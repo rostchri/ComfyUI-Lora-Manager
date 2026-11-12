@@ -37,6 +37,7 @@ from ...services.model_sources import (
 from ...services.settings_manager import get_settings_manager
 from ...services.service_registry import ServiceRegistry
 from ...services.websocket_manager import ws_manager
+from ...utils import aimi
 from ...utils.metadata_manager import MetadataManager
 from ...utils.models import (
     LoraMetadata,
@@ -526,6 +527,17 @@ class ModelSourceHandler:
         # Strip the repository sub-directory — "diffusion_models/xxx.safetensors"
         # is a repository convention, not meaningful for local storage.
         file_base = os.path.basename(filename)
+
+        if aimi.governs(target_dir):
+            # aimodelinventory: repository files are adopted by the store
+            # authority (hf-download/hf-adopt), not written into a view.
+            return web.json_response(
+                {
+                    "error": "aimodelinventory: repository downloads into store views are not supported; "
+                    "adopt the model into aimodelinventory instead"
+                },
+                status=403,
+            )
 
         os.makedirs(target_dir, exist_ok=True)
         dest_path = os.path.join(target_dir, file_base)

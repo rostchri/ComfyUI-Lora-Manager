@@ -222,7 +222,7 @@ class CheckpointScanner(ModelScanner):
 
             # Calculate hash
             logger.info(f"Calculating hash for checkpoint: {file_path}")
-            sha256 = await calculate_sha256(real_path)
+            sha256 = await calculate_sha256(file_path)  # aimodelinventory: identity from the link chain
             if not sha256:
                 # Nothing was read (the file is empty or was truncated while
                 # open): there is no identity to store. Keep the lazy-hash

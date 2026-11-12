@@ -229,6 +229,10 @@ def detect_quantization(file_path: str) -> Optional[str]:
     a dominant F8_* tensor dtype ("FP8"). Every other extension and any read
     failure yields ``None``. Reads only file headers and never raises.
     """
+    from . import aimi
+
+    if aimi.skip_header_read(file_path):
+        return None
     extension = os.path.splitext(file_path)[1].lower()
     if extension == ".gguf":
         return parse_gguf_quantization(file_path)

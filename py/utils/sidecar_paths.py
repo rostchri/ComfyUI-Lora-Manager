@@ -84,8 +84,16 @@ def _get_settings_value(key: str, default=None):
 
 
 def get_storage_mode() -> str:
-    """Return the active sidecar storage mode (``alongside`` unless configured)."""
+    """Return the active sidecar storage mode (``alongside`` unless configured).
 
+    aimodelinventory: model folders are views into a shared store, so sidecars
+    and previews never go next to the models; centralized storage is forced.
+    """
+
+    from . import aimi
+
+    if aimi.active():
+        return STORAGE_MODE_CENTRALIZED
     mode = _get_settings_value("sidecar_storage_mode", STORAGE_MODE_ALONGSIDE)
     if mode not in _VALID_MODES:
         return STORAGE_MODE_ALONGSIDE

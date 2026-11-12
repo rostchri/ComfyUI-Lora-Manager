@@ -37,6 +37,7 @@ from typing import (
     cast,
 )
 
+from ..utils import aimi
 from ..utils.constants import PREVIEW_EXTENSIONS
 from ..utils.sidecar_paths import get_metadata_path, get_preview_path, get_sidecar_dir
 from ..utils.workflow_extraction import get_workflow_document_path
@@ -149,6 +150,11 @@ class PendingDeleteService:
         when the model root cannot be resolved, or staging failed (caller
         falls back to a hard delete).
         """
+        if aimi.governs(original_file_path):
+            # aimodelinventory: no undo batches inside a view; the caller
+            # removes the view link directly.
+            return None
+
         # LOCK-FREE section: opportunistic purge must never run while holding
         # the ops lock (the lock is not re-entrant).
         await self._opportunistic_purge()
@@ -568,6 +574,9 @@ class PendingDeleteService:
         staging_parents: List[str] = []
         for root in roots:
             if not os.path.isdir(root):
+                continue
+            if aimi.skip_root_maintenance(root):
+                # aimodelinventory view: never staged into, never walked.
                 continue
             visited: Set[str] = set()
             for dirpath, dirnames, _files in os.walk(
