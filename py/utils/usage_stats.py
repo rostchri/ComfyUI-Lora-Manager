@@ -12,6 +12,7 @@ from ..config import config
 from ..services.service_registry import ServiceRegistry
 from ..services.model_scanner import _is_excluded_dir
 from ..utils.settings_paths import get_settings_dir
+from . import aimi
 
 # Check if running in standalone mode
 standalone_mode = os.environ.get("LORA_MANAGER_STANDALONE", "0") == "1" or os.environ.get("HF_HUB_DISABLE_TELEMETRY", "0") == "0"
@@ -123,6 +124,9 @@ class UsageStats:
             os.makedirs(os.path.dirname(new_path), exist_ok=True)
             shutil.copy2(old_path, new_path)
             logger.info("Migrated usage stats from %s to %s", old_path, new_path)
+            if aimi.governs(old_path):
+                # Shared aimodelinventory view: other instances may still read it.
+                return
             try:
                 os.remove(old_path)
                 logger.info("Cleaned up old stats file: %s", old_path)

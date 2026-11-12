@@ -575,3 +575,18 @@ def test_recipes_leave_the_view(bucket, tmp_path, monkeypatch):
     custom = tmp_path / "my-recipes"
     monkeypatch.setattr(settings_manager, "get_settings_manager", lambda: _Settings(str(custom)))
     assert recipes_paths.get_effective_recipes_dir() == str(custom)
+
+
+def test_stats_migration_keeps_the_shared_file(bucket, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from py.utils.usage_stats import UsageStats
+
+    legacy = bucket / "app/comfyui/loras" / UsageStats.STATS_FILENAME
+    legacy.write_text("{}")
+    target = tmp_path / "settings/stats" / UsageStats.STATS_FILENAME
+    stats = SimpleNamespace(_stats_file_path=str(target), _get_old_stats_file_path=lambda: str(legacy))
+
+    UsageStats._migrate_from_old_location(stats)
+    assert target.read_text() == "{}"
+    assert legacy.exists()
