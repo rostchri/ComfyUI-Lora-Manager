@@ -20,16 +20,22 @@ from py.utils import file_utils
 
 FAKE_CLI = textwrap.dedent(
     '''
+    from __future__ import annotations
+
     import json, os, shutil
+    from dataclasses import dataclass
     from pathlib import Path
 
     CALLS = []
 
+    # A dataclass with string annotations like the real CLI: the decorator
+    # looks the defining module up in sys.modules, so loading the CLI
+    # without registering it fails.
+    @dataclass
     class Config:
-        def __init__(self):
-            self.mount = None
-            self.hash_mode = "none"
-            self.dry_run = False
+        mount: object = None
+        hash_mode: str = "none"
+        dry_run: bool = False
 
         def blob_key(self, sha256):
             return f"aimodelinventory/blobs/sha256/{sha256[:2]}/{sha256}"

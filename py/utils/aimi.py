@@ -52,6 +52,7 @@ import os
 import posixpath
 import shutil
 import socket
+import sys
 import threading
 import time
 import types
@@ -418,7 +419,15 @@ def _cli() -> Tuple[Any, Any]:
             loader = importlib.machinery.SourceFileLoader("aimodelinventory_cli", path)
             module = types.ModuleType(loader.name)
             module.__file__ = path
-            loader.exec_module(module)
+            # The CLI defines dataclasses; @dataclass resolves annotations
+            # through sys.modules[cls.__module__], so the module must be
+            # registered before it executes.
+            sys.modules[loader.name] = module
+            try:
+                loader.exec_module(module)
+            except BaseException:
+                sys.modules.pop(loader.name, None)
+                raise
             _cli_state["module"] = module
         module = _cli_state["module"]
         cfg = module.Config()
